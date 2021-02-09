@@ -202,35 +202,35 @@ fn panic_handler(info: &core::panic::PanicInfo<'_>) -> ! {
 /// start() jumps here in supervisor mode on all CPUs.
 pub unsafe fn kernel_main() -> ! {
     static STARTED: AtomicBool = AtomicBool::new(false);
+    let kernel = unsafe { kernel_unchecked_pin().get_unchecked_mut() };
 
     if cpuid() == 0 {
         // Initialize the kernel.
 
         // Console.
         Uart::init();
-        unsafe { consoleinit(kernel_unchecked_pin().project().devsw) };
+        unsafe { consoleinit(&mut kernel.devsw) };
 
         println!();
         println!("rv6 kernel is booting");
         println!();
 
         // Physical page allocator.
-        unsafe { kernel_unchecked_pin().project().kmem.get_mut().init() };
+        unsafe { kernel.kmem.get_mut().init() };
 
         // Create kernel memory manager.
         let memory = KernelMemory::new().expect("PageTable::new failed");
 
         // Turn on paging.
         unsafe {
-            kernel_unchecked_pin()
-                .project()
+            kernel
                 .memory
                 .write(memory)
                 .init_hart()
         };
 
         // Process system.
-        unsafe { kernel_unchecked_pin().project().procs.init() };
+        unsafe { Pin::new_unchecked(&mut kernel.procs).init() };
 
         // Trap vectors.
         unsafe { trapinit() };
@@ -245,21 +245,18 @@ pub unsafe fn kernel_main() -> ! {
         unsafe { plicinithart() };
 
         // Buffer cache.
-        unsafe { kernel_unchecked_pin().project().bcache.get_pin_mut().init() };
+        unsafe { Pin::new_unchecked(&mut kernel.bcache).get_pin_mut().init() };
 
         // Emulated hard disk.
-        unsafe {
-            kernel_unchecked_pin()
-                .project()
-                .file_system
-                .disk
-                .get_mut()
-                .init()
-        };
+        kernel
+            .file_system
+            .disk
+            .get_mut()
+            .init();
 
         // First user process.
         // Temporarily create one more `Pin<&mut Kernel>`, just to initialize the first user process.
-        unsafe { kernel_unchecked_pin().project().procs.user_proc_init() };
+        unsafe { Pin::new_unchecked(&mut kernel.procs).user_proc_init() };
         STARTED.store(true, Ordering::Release);
     } else {
         while !STARTED.load(Ordering::Acquire) {
@@ -270,8 +267,7 @@ pub unsafe fn kernel_main() -> ! {
 
         // Turn on paging.
         unsafe {
-            kernel_unchecked_pin()
-                .project()
+            kernel
                 .memory
                 .assume_init_mut()
                 .init_hart()
